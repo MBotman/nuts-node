@@ -39,6 +39,19 @@ import (
 
 // createPresentationRequest creates a new Authorization Request as specified by OpenID4VP: https://openid.net/specs/openid-4-verifiable-presentations-1_0.html.
 // It is sent by a verifier to a wallet, to request one or more verifiable credentials as verifiable presentation from the wallet.
+func (r *Wrapper) createPresentationRequest(scope string, redirectURL url.URL, verifierIdentifier url.URL) map[string]interface{} {
+	params := make(map[string]interface{})
+	params[scopeParam] = scope
+	params[redirectURIParam] = redirectURL.String()
+	// TODO: Check this
+	params[clientMetadataURIParam] = verifierIdentifier.JoinPath("/.well-known/openid-wallet-metadata/metadata.xml").String()
+	params[responseModeParam] = responseModeDirectPost
+	params[responseTypeParam] = responseTypeVPIDToken
+	return params
+}
+
+// sendPresentationRequest creates a new OpenID4VP Presentation Requests and "sends" it to the wallet, by redirecting the user-agent to the wallet's authorization endpoint.
+// It is sent by a verifier to a wallet, to request one or more verifiable credentials as verifiable presentation from the wallet.
 func (r *Wrapper) sendPresentationRequest(ctx context.Context, response http.ResponseWriter, scope string,
 	redirectURL url.URL, verifierIdentifier url.URL, walletIdentifier url.URL) error {
 	// TODO: Lookup wallet metadata for correct authorization endpoint. But for Nuts nodes, we derive it from the walletIdentifier

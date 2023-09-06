@@ -21,6 +21,7 @@ package iam
 import (
 	"github.com/google/uuid"
 	"github.com/nuts-foundation/go-did/did"
+	"github.com/nuts-foundation/go-did/vc"
 	"net/url"
 	"sync"
 )
@@ -38,6 +39,10 @@ func (s *SessionManager) Create(session Session) string {
 	return id
 }
 
+func (s *SessionManager) Update(sessionID string, session Session) {
+	s.sessions.Store(sessionID, session)
+}
+
 func (s *SessionManager) Get(id string) *Session {
 	session, ok := s.sessions.Load(id)
 	if !ok {
@@ -48,13 +53,15 @@ func (s *SessionManager) Get(id string) *Session {
 }
 
 type Session struct {
-	ClientID     string
-	Scope        string
-	OwnDID       did.DID
-	ClientState  string
-	RedirectURI  string
-	ServerState  map[string]interface{}
-	ResponseType string
+	ClientID      string
+	Scope         string
+	OwnDID        did.DID
+	ClientState   string
+	RedirectURI   string
+	ServerState   map[string]interface{}
+	Presentation  *vc.VerifiablePresentation
+	ResponseType  string
+	RequestObject string
 }
 
 func AddQueryParams(u url.URL, params map[string]string) url.URL {

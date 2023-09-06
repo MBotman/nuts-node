@@ -106,11 +106,14 @@ func (r Wrapper) Routes(router core.EchoRouter) {
 	// The following handler is of the OpenID4VP verifier where the browser will be redirected to by the wallet,
 	// after completing a presentation exchange.
 	router.GET("/iam/:did/openid4vp_completed", r.handlePresentationRequestCompleted, auditMiddleware)
-	// The following 2 handlers are used to test/demo the OpenID4VP flow.
-	// - GET renders an HTML page with a form to start the flow.
-	// - POST handles the form submission, initiating the flow.
+	// The following handlers are used to test/demo the OpenID4VP flows.
+	// - GET  /openid4vp_demo: renders an HTML page with a form to start the OpenID4VP flow.
+	// - POST /openid4vp_demo: handles the form submission, initiating the flow.
+	// - GET  /openid4vp_demo_status: API for XIS to retrieve the status of the flow (if sessionID param is present)
 	router.GET("/iam/:did/openid4vp_demo", r.handleOpenID4VPDemoLanding, auditMiddleware)
 	router.POST("/iam/:did/openid4vp_demo", r.handleOpenID4VPDemoSendRequest, auditMiddleware)
+	router.GET("/iam/:did/openid4vp_demo/:sessionID", r.handleOpenID4VPDemoGetRequestURI, auditMiddleware)
+	router.GET("/iam/:did/openid4vp_demo_status", r.handleOpenID4VPDemoRequestWalletStatus, auditMiddleware)
 }
 
 // HandleTokenRequest handles calls to the token endpoint for exchanging a grant (e.g authorization code or pre-authorized code) for an access token.
