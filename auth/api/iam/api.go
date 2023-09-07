@@ -88,14 +88,6 @@ func (r Wrapper) Routes(router core.EchoRouter) {
 			}
 		},
 		func(f StrictHandlerFunc, operationID string) StrictHandlerFunc {
-			return func(ctx echo.Context, args interface{}) (interface{}, error) {
-				if !r.auth.V2APIEnabled() {
-					return nil, core.Error(http.StatusForbidden, "Access denied")
-				}
-				return f(ctx, args)
-			}
-		},
-		func(f StrictHandlerFunc, operationID string) StrictHandlerFunc {
 			return audit.StrictMiddleware(f, apiModuleName, operationID)
 		},
 	}))
