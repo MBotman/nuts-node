@@ -253,6 +253,22 @@ func (r *Wrapper) handlePresentationRequestCompleted(ctx echo.Context) error {
 	return ctx.HTML(http.StatusOK, buf.String())
 }
 
+func (r Wrapper) getOpenID4VPAuthzRequest(echoCtx echo.Context) error {
+	didParam := echoCtx.Param("did")
+	if didParam == "" {
+		return echoCtx.String(http.StatusBadRequest, "missing DID")
+	}
+	var subjectDID *did.DID
+	if !strings.HasPrefix(didParam, "did:") {
+		// Assume did:nuts
+		didParam += "did:nuts:" + didParam
+	}
+	subjectDID, err = did.ParseDID(didParam)
+	if err != nil {
+
+	}
+}
+
 func assertParamPresent(params map[string]string, param ...string) error {
 	for _, curr := range param {
 		if len(params[curr]) == 0 {

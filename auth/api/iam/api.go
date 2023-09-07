@@ -98,6 +98,9 @@ func (r Wrapper) Routes(router core.EchoRouter) {
 	// The following handler is of the OpenID4VP verifier where the browser will be redirected to by the wallet,
 	// after completing a presentation exchange.
 	router.GET("/iam/:did/openid4vp_completed", r.handlePresentationRequestCompleted, auditMiddleware)
+	// The following handler is of the OpenID4VP verifier where the wallet can retrieve the Authorization Request Object,
+	// as specified by https://www.rfc-editor.org/rfc/rfc9101.txt
+	router.GET("/iam/:did/openid4vp/authzreq/:sessionID", r.getOpenID4VPAuthzRequest, auditMiddleware)
 	// The following handlers are used to test/demo the OpenID4VP flows.
 	// - GET  /openid4vp_demo: renders an HTML page with a form to start the OpenID4VP flow.
 	// - POST /openid4vp_demo: handles the form submission, initiating the flow.
