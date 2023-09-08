@@ -26,6 +26,7 @@ import (
 	"github.com/nuts-foundation/go-did/vc"
 	"github.com/nuts-foundation/nuts-node/vcr"
 	"github.com/nuts-foundation/nuts-node/vcr/credential"
+	"github.com/nuts-foundation/nuts-node/vcr/holder"
 	"github.com/nuts-foundation/nuts-node/vdr/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,8 +91,10 @@ func TestWrapper_handlePresentationRequest(t *testing.T) {
 		ctrl := gomock.NewController(t)
 		mockVDR := types.NewMockVDR(ctrl)
 		mockVCR := vcr.NewMockVCR(ctrl)
+		mockWallet := holder.NewMockWallet(ctrl)
+		mockVCR.EXPECT().Wallet().Return(mockWallet)
 		instance := New(nil, mockVCR, mockVDR)
-		mockVCR.EXPECT().Search(gomock.Any(), gomock.Any(), false, nil).Return(walletCredentials, nil)
+		mockWallet.EXPECT().List(gomock.Any(), holderDID).Return(walletCredentials, nil)
 		mockVDR.EXPECT().IsOwner(gomock.Any(), holderDID).Return(true, nil)
 
 		params := map[string]string{
