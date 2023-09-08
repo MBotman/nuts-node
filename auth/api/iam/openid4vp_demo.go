@@ -20,25 +20,23 @@ package iam
 
 import (
 	"bytes"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/golang-jwt/jwt"
 	"github.com/labstack/echo/v4"
-	"github.com/nuts-foundation/go-did/did"
+	"github.com/nuts-foundation/nuts-node/vdr/didservice"
+	"github.com/nuts-foundation/nuts-node/vdr/didweb"
+	"github.com/nuts-foundation/nuts-node/vdr/types"
 	"net/http"
 	"net/url"
-	"strings"
 )
 
 func (r *Wrapper) handleOpenID4VPDemoLanding(echoCtx echo.Context) error {
-	requestURL := *echoCtx.Request().URL
-	requestURL.Host = echoCtx.Request().Host
-	requestURL.Scheme = "http"
-	verifierID := requestURL.String()
-	verifierID, _ = strings.CutSuffix(verifierID, "/openid4vp_demo")
+	ownedDIDs, _ := r.vdr.ListOwned(echoCtx.Request().Context())
+	if len(ownedDIDs) == 0 {
+		return errors.New("no owned DIDs")
+	}
+	verifierID := r.auth.PublicURL().JoinPath("iam", ownedDIDs[0].ID).String()
 
 	buf := new(bytes.Buffer)
 	if err := r.templates.ExecuteTemplate(buf, "openid4vp_demo.html", struct {
@@ -58,7 +56,8 @@ func (r *Wrapper) handleOpenID4VPDemoSendRequest(echoCtx echo.Context) error {
 	if verifierID == "" {
 		return errors.New("missing verifier_id")
 	}
-	verifierDID, err := did.ParseDID(echoCtx.Param("did"))
+	verifierURL, _ := url.Parse(verifierID)
+	verifierDID, err := didweb.URLToDID(*verifierURL)
 	if err != nil {
 		return fmt.Errorf("invalid verifier DID: %w", err)
 	}
@@ -71,11 +70,11 @@ func (r *Wrapper) handleOpenID4VPDemoSendRequest(echoCtx echo.Context) error {
 		return errors.New("missing scope")
 	}
 	walletURL, _ := url.Parse(walletID)
-	verifierURL, _ := url.Parse(verifierID)
 
+	ctx := echoCtx.Request().Context()
 	if echoCtx.Param("serverWallet") != "" {
 		return r.sendPresentationRequest(
-			echoCtx.Request().Context(), echoCtx.Response(), scope,
+			ctx, echoCtx.Response(), scope,
 			*walletURL.JoinPath("openid4vp_completed"), *verifierURL, *walletURL,
 		)
 	} else {
@@ -87,19 +86,29 @@ func (r *Wrapper) handleOpenID4VPDemoSendRequest(echoCtx echo.Context) error {
 		sessionID := r.sessions.Create(session)
 		redirectURL := *verifierURL.JoinPath("openid4vp_completed")
 		redirectURL.RawQuery = url.Values{"session_id": []string{sessionID}}.Encode() // TODO: fix this
-		requestObjectParams := r.createPresentationRequest(scope, redirectURL, *verifierURL)
-		requestObjectParams["iss"] = verifierDID
+		requestObjectParams := r.createPresentationRequest(scope, redirectURL, verifierURL.Path)
+		requestObjectParams["iss"] = verifierDID.String()
 
-		privateKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		signedRequestObject := jwt.New(jwt.SigningMethodES256)
-		signedRequestObject.Claims = jwt.MapClaims(requestObjectParams)
-		session.RequestObject, err = signedRequestObject.SignedString(privateKey)
+		requestObjectJSON, _ := json.MarshalIndent(requestObjectParams, " ", "  ")
+		println(string(requestObjectJSON))
+
+		// Sign Request Object with assertionMethod key of verifier DID
+		keyResolver := didservice.PrivateKeyResolver{
+			DIDResolver:     r.vdr.Resolver(),
+			PrivKeyResolver: r.keyStore,
+		}
+		signingKey, err := keyResolver.ResolvePrivateKey(ctx, *verifierDID, nil, types.NutsSigningKeyType)
+		if err != nil {
+			return fmt.Errorf("failed to resolve signing key (did=%s): %w", verifierDID, err)
+		}
+		session.RequestObject, err = r.keyStore.SignJWT(ctx, requestObjectParams, nil, signingKey)
 		if err != nil {
 			return fmt.Errorf("failed to sign request object: %w", err)
 		}
 		r.sessions.Update(sessionID, session)
 
-		qrCode := "openid://?" + url.Values{"request_uri": []string{verifierURL.JoinPath("openid4vp_demo", sessionID).String()}}.Encode()
+		requestURI := r.auth.PublicURL().JoinPath("iam", "openid4vp", "authzreq", sessionID)
+		qrCode := "openid://?" + url.Values{"request_uri": []string{requestURI.String()}}.Encode()
 
 		// Show QR code to scan using (mobile) wallet
 		buf := new(bytes.Buffer)

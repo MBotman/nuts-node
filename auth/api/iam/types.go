@@ -47,7 +47,7 @@ const (
 	responseTypeVPIDToken = "vp_token id_token"
 )
 
-var responseTypesSupported = []string{responseTypeCode, responseTypeVPToken, responseTypeVPIDToken}
+var responseTypesSupported = []string{responseTypeVPToken}
 
 const (
 	// responseModeParam is the name of the OAuth2 response_mode parameter.

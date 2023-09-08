@@ -28,6 +28,7 @@ import (
 	"github.com/nuts-foundation/nuts-node/auth"
 	"github.com/nuts-foundation/nuts-node/auth/log"
 	"github.com/nuts-foundation/nuts-node/core"
+	"github.com/nuts-foundation/nuts-node/crypto"
 	"github.com/nuts-foundation/nuts-node/vcr"
 	"github.com/nuts-foundation/nuts-node/vcr/openid4vci"
 	"github.com/nuts-foundation/nuts-node/vdr/didservice"
@@ -51,12 +52,13 @@ type Wrapper struct {
 	vcr                     vcr.VCR
 	vdr                     vdr.VDR
 	auth                    auth.AuthenticationServices
+	keyStore                crypto.KeyStore
 	sessions                *SessionManager
 	presentationDefinitions presentationDefinitionRegistry
 	templates               *template.Template
 }
 
-func New(authInstance auth.AuthenticationServices, vcrInstance vcr.VCR, vdrInstance vdr.VDR) *Wrapper {
+func New(authInstance auth.AuthenticationServices, vcrInstance vcr.VCR, vdrInstance vdr.VDR, keyStore crypto.KeyStore) *Wrapper {
 	templates := template.New("oauth2 templates")
 	_, err := templates.ParseFS(assets, "assets/*.html")
 	if err != nil {
@@ -67,6 +69,7 @@ func New(authInstance auth.AuthenticationServices, vcrInstance vcr.VCR, vdrInsta
 		auth:                    authInstance,
 		vcr:                     vcrInstance,
 		vdr:                     vdrInstance,
+		keyStore:                keyStore,
 		presentationDefinitions: nutsPresentationDefinitionRegistry{},
 		templates:               templates,
 	}
@@ -100,13 +103,13 @@ func (r Wrapper) Routes(router core.EchoRouter) {
 	router.GET("/iam/:did/openid4vp_completed", r.handlePresentationRequestCompleted, auditMiddleware)
 	// The following handler is of the OpenID4VP verifier where the wallet can retrieve the Authorization Request Object,
 	// as specified by https://www.rfc-editor.org/rfc/rfc9101.txt
-	router.GET("/iam/:did/openid4vp/authzreq/:sessionID", r.getOpenID4VPAuthzRequest, auditMiddleware)
+	router.GET("/iam/openid4vp/authzreq/:sessionID", r.getOpenID4VPAuthzRequest, auditMiddleware)
 	// The following handlers are used to test/demo the OpenID4VP flows.
 	// - GET  /openid4vp_demo: renders an HTML page with a form to start the OpenID4VP flow.
 	// - POST /openid4vp_demo: handles the form submission, initiating the flow.
 	// - GET  /openid4vp_demo_status: API for XIS to retrieve the status of the flow (if sessionID param is present)
-	router.GET("/iam/:did/openid4vp_demo", r.handleOpenID4VPDemoLanding, auditMiddleware)
-	router.POST("/iam/:did/openid4vp_demo", r.handleOpenID4VPDemoSendRequest, auditMiddleware)
+	router.GET("/iam/openid4vp_demo", r.handleOpenID4VPDemoLanding, auditMiddleware)
+	router.POST("/iam/openid4vp_demo", r.handleOpenID4VPDemoSendRequest, auditMiddleware)
 	router.GET("/iam/:did/openid4vp_demo/:sessionID", r.handleOpenID4VPDemoGetRequestURI, auditMiddleware)
 	router.GET("/iam/:did/openid4vp_demo_status", r.handleOpenID4VPDemoRequestWalletStatus, auditMiddleware)
 }
@@ -206,11 +209,11 @@ func (r Wrapper) HandleAuthorizeRequest(ctx context.Context, request HandleAutho
 
 // GetOAuthAuthorizationServerMetadata returns the Authorization Server's metadata
 func (r Wrapper) GetOAuthAuthorizationServerMetadata(ctx context.Context, request GetOAuthAuthorizationServerMetadataRequestObject) (GetOAuthAuthorizationServerMetadataResponseObject, error) {
+	request.Did = "did:nuts:" + request.Did
 	id, err := did.ParseDID(request.Did)
 	if err != nil {
 		return nil, core.InvalidInputError("authz server metadata: %w", err)
 	}
-
 	if id.Method != "nuts" {
 		return nil, core.InvalidInputError("authz server metadata: only did:nuts is supported")
 	}

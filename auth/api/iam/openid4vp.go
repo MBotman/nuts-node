@@ -39,14 +39,14 @@ import (
 
 // createPresentationRequest creates a new Authorization Request as specified by OpenID4VP: https://openid.net/specs/openid-4-verifiable-presentations-1_0.html.
 // It is sent by a verifier to a wallet, to request one or more verifiable credentials as verifiable presentation from the wallet.
-func (r *Wrapper) createPresentationRequest(scope string, redirectURL url.URL, verifierIdentifier url.URL) map[string]interface{} {
+func (r *Wrapper) createPresentationRequest(scope string, redirectURL url.URL, identifierPath string) map[string]interface{} {
 	params := make(map[string]interface{})
 	params[scopeParam] = scope
 	params[redirectURIParam] = redirectURL.String()
-	// TODO: Check this
-	params[clientMetadataURIParam] = verifierIdentifier.JoinPath("/.well-known/openid-wallet-metadata/metadata.xml").String()
+	params[clientMetadataURIParam] = r.auth.PublicURL().JoinPath(".well-known", "oauth-authorization-server", identifierPath).String()
 	params[responseModeParam] = responseModeDirectPost
-	params[responseTypeParam] = responseTypeVPIDToken
+	// TODO: should be vp_token id_token, but Sphereon Wallet does not support it?
+	params[responseTypeParam] = responseTypeVPToken
 	return params
 }
 
@@ -254,19 +254,12 @@ func (r *Wrapper) handlePresentationRequestCompleted(ctx echo.Context) error {
 }
 
 func (r Wrapper) getOpenID4VPAuthzRequest(echoCtx echo.Context) error {
-	didParam := echoCtx.Param("did")
-	if didParam == "" {
-		return echoCtx.String(http.StatusBadRequest, "missing DID")
+	sessionID := echoCtx.Param("sessionID")
+	if sessionID == "" {
+		return echoCtx.String(http.StatusBadRequest, "missing sessionID")
 	}
-	var subjectDID *did.DID
-	if !strings.HasPrefix(didParam, "did:") {
-		// Assume did:nuts
-		didParam += "did:nuts:" + didParam
-	}
-	subjectDID, err = did.ParseDID(didParam)
-	if err != nil {
-
-	}
+	session := r.sessions.Get(sessionID)
+	return echoCtx.String(http.StatusOK, session.RequestObject)
 }
 
 func assertParamPresent(params map[string]string, param ...string) error {

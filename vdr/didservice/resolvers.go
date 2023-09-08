@@ -15,14 +15,17 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Package service contains DID Document related functionality that only matters to the current node.
+// Package didservice contains DID Document related functionality that only matters to the current node.
 // All functionality here has zero relations to the network.
 package didservice
 
 import (
+	"context"
 	"crypto"
 	"errors"
 	"fmt"
+	nutsCrypto "github.com/nuts-foundation/nuts-node/crypto"
+	"sort"
 	"sync"
 	"time"
 
@@ -88,13 +91,7 @@ func (r KeyResolver) ResolveKeyByID(keyID string, validAt *time.Time, relationTy
 }
 
 func (r KeyResolver) ResolveKey(id did.DID, validAt *time.Time, relationType types.RelationType) (ssi.URI, crypto.PublicKey, error) {
-	doc, _, err := r.Resolver.Resolve(id, &types.ResolveMetadata{
-		ResolveTime: validAt,
-	})
-	if err != nil {
-		return ssi.URI{}, nil, err
-	}
-	keys, err := resolveRelationships(doc, relationType)
+	keys, err := resolveKeys(r.Resolver, id, validAt, relationType)
 	if err != nil {
 		return ssi.URI{}, nil, err
 	}
@@ -106,6 +103,49 @@ func (r KeyResolver) ResolveKey(id did.DID, validAt *time.Time, relationType typ
 		return ssi.URI{}, nil, err
 	}
 	return keys[0].ID.URI(), publicKey, nil
+}
+
+func resolveKeys(didResolver types.DIDResolver, id did.DID, validAt *time.Time, relationType types.RelationType) ([]did.VerificationRelationship, error) {
+	var docs []*did.Document
+	doc, _, err := didResolver.Resolve(id, &types.ResolveMetadata{
+		ResolveTime: validAt,
+	})
+	if err != nil {
+		return nil, err
+	}
+	docs = append(docs, doc)
+	// did:web of a Nuts node is probably a derivative of a did:nuts to which it refers to using alsoKnownAs,
+	// so if that's the case we need to resolve those as well, since the keys are stored under their did:nuts ID, not did:web.
+	if doc.ID.Method == "web" && len(doc.AlsoKnownAs) > 0 {
+		for _, aka := range doc.AlsoKnownAs {
+			akaDID, _ := did.ParseDID(aka.String())
+			if akaDID == nil {
+				// alsoKnownAs is not a DID
+				continue
+			}
+			if akaDID.Method != "nuts" {
+				// Just to be sure, only support did:nuts alsoKnownAs for now. Otherwise, we might end up in an infinite loop?
+				continue
+			}
+			akaDoc, _, err := didResolver.Resolve(*akaDID, &types.ResolveMetadata{ResolveTime: validAt, AllowDeactivated: false})
+			if err != nil && !IsFunctionalResolveError(err) {
+				// Ignore unresolvable alsoKnownAs documents
+				return nil, fmt.Errorf("failed to resolve alsoKnownAs (did=%s, alsoKnownAs=%s): %w", id, akaDID, err)
+			}
+			if akaDoc != nil {
+				docs = append(docs, akaDoc)
+			}
+		}
+	}
+	var allKeys []did.VerificationRelationship
+	for _, doc := range docs {
+		docKeys, err := resolveRelationships(doc, relationType)
+		if err != nil {
+			return nil, err
+		}
+		allKeys = append(allKeys, docKeys...)
+	}
+	return allKeys, nil
 }
 
 func resolveRelationships(doc *did.Document, relationType types.RelationType) (relationships did.VerificationRelationships, err error) {
@@ -184,6 +224,54 @@ func (s ServiceResolver) ResolveEx(endpoint ssi.URI, depth int, maxDepth int, do
 		}
 	}
 	return *service, nil
+}
+
+// PrivateKeyResolver resolves private keys based upon the VDR document resolver
+type PrivateKeyResolver struct {
+	DIDResolver     types.DIDResolver
+	PrivKeyResolver nutsCrypto.KeyResolver
+}
+
+// ResolvePrivateKey is a tries to find a private key in the node's keystore for the given DID, of the given type.
+// Special treatment is given to did:web DIDs, which are assumed to be a derivative of a did:nuts DID:
+// It will try to return a private key from the did:nuts document, as long as it's present (given it's public key fingerprint)
+// in the did:web document (since the caller requested a did:web key, not a did:nuts one).
+// If no private key is found, ErrKeyNotFound is returned.
+func (r PrivateKeyResolver) ResolvePrivateKey(ctx context.Context, id did.DID, validAt *time.Time, relationType types.RelationType) (nutsCrypto.Key, error) {
+	keys, err := resolveKeys(r.DIDResolver, id, validAt, relationType)
+	if err != nil {
+		return nil, err
+	}
+	// Optimization: give precedence to did:nuts keys, since those are most likely to be present (in contrary to did:web)
+	// Sort keys by DID method, so did:nuts keys are first
+	sort.SliceStable(keys, func(i, j int) bool {
+		if keys[i].ID.Method == "nuts" {
+			return true
+		}
+		return false
+	})
+	for _, key := range keys {
+		privateKey, err := r.PrivKeyResolver.Resolve(ctx, key.ID.String())
+		if err != nil {
+			if errors.Is(err, nutsCrypto.ErrPrivateKeyNotFound) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to resolve private key (kid=%s): %w", key.ID, err)
+		}
+		if id.Method == "web" && key.ID.Method == "nuts" {
+			// did:web is a derivative of did:nuts, match with key on did:web method since it's an alias of the did:nuts key.
+			for _, candidate := range keys {
+				if candidate.ID.WithoutURL().Equals(id) && // check it's a key from the requested DID
+					candidate.PublicKeyBase58 == key.PublicKeyBase58 {
+					return nutsCrypto.Alias(privateKey, candidate.ID.String()), nil
+				}
+			}
+		}
+		// Otherwise, just return the key
+		return privateKey, nil
+	}
+	// No keys were found
+	return nil, types.ErrKeyNotFound
 }
 
 // IsFunctionalResolveError returns true if the given error indicates the DID or service not being found or invalid,
