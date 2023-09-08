@@ -86,7 +86,7 @@ func (r *Wrapper) handleOpenID4VPDemoSendRequest(echoCtx echo.Context) error {
 		sessionID := r.sessions.Create(session)
 		redirectURL := *verifierURL.JoinPath("openid4vp_completed")
 		redirectURL.RawQuery = url.Values{"session_id": []string{sessionID}}.Encode() // TODO: fix this
-		requestObjectParams := r.createPresentationRequest(scope, redirectURL, verifierURL.Path)
+		requestObjectParams := r.createPresentationRequest(scope, redirectURL, *verifierDID, verifierURL.Path)
 		requestObjectParams["iss"] = verifierDID.String()
 
 		requestObjectJSON, _ := json.MarshalIndent(requestObjectParams, " ", "  ")
