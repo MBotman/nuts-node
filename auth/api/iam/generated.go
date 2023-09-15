@@ -39,6 +39,11 @@ type HandleAuthorizeRequestParams struct {
 	Params *map[string]string `form:"params,omitempty" json:"params,omitempty"`
 }
 
+// PresentationDefinitionParams defines parameters for PresentationDefinition.
+type PresentationDefinitionParams struct {
+	Scope []string `form:"scope" json:"scope"`
+}
+
 // HandleTokenRequestFormdataBody defines parameters for HandleTokenRequest.
 type HandleTokenRequestFormdataBody struct {
 	Code                 string            `form:"code" json:"code"`
@@ -149,6 +154,9 @@ type ServerInterface interface {
 	// Returns the did:web version of a Nuts DID document
 	// (GET /iam/{did}/did.json)
 	GetWebDID(ctx echo.Context, did string) error
+	// Used by relying parties to obtain a presentation definition for desired scopes.
+	// (GET /iam/{did}/presentation_definition)
+	PresentationDefinition(ctx echo.Context, did string, params PresentationDefinitionParams) error
 	// Used by to request access- or refresh tokens.
 	// (POST /iam/{did}/token)
 	HandleTokenRequest(ctx echo.Context, did string) error
@@ -219,6 +227,31 @@ func (w *ServerInterfaceWrapper) GetWebDID(ctx echo.Context) error {
 
 	// Invoke the callback with all the unmarshaled arguments
 	err = w.Handler.GetWebDID(ctx, did)
+	return err
+}
+
+// PresentationDefinition converts echo context to params.
+func (w *ServerInterfaceWrapper) PresentationDefinition(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "did" -------------
+	var did string
+
+	err = runtime.BindStyledParameterWithLocation("simple", false, "did", runtime.ParamLocationPath, ctx.Param("did"), &did)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter did: %s", err))
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PresentationDefinitionParams
+	// ------------- Required query parameter "scope" -------------
+
+	err = runtime.BindQueryParameter("form", true, true, "scope", ctx.QueryParams(), &params.Scope)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter scope: %s", err))
+	}
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.PresentationDefinition(ctx, did, params)
 	return err
 }
 
@@ -301,6 +334,7 @@ func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL 
 	router.GET(baseURL+"/.well-known/oauth-authorization-server/iam/:did", wrapper.OAuthAuthorizationServerMetadata)
 	router.GET(baseURL+"/iam/:did/authorize", wrapper.HandleAuthorizeRequest)
 	router.GET(baseURL+"/iam/:did/did.json", wrapper.GetWebDID)
+	router.GET(baseURL+"/iam/:did/presentation_definition", wrapper.PresentationDefinition)
 	router.POST(baseURL+"/iam/:did/token", wrapper.HandleTokenRequest)
 	router.GET(baseURL+"/iam/:id/oauth-client", wrapper.GetOAuthClientMetadata)
 	router.POST(baseURL+"/internal/auth/v2/:did/request-access-token", wrapper.RequestAccessToken)
@@ -408,6 +442,32 @@ type GetWebDID404Response struct {
 }
 
 func (response GetWebDID404Response) VisitGetWebDIDResponse(w http.ResponseWriter) error {
+	w.WriteHeader(404)
+	return nil
+}
+
+type PresentationDefinitionRequestObject struct {
+	Did    string `json:"did"`
+	Params PresentationDefinitionParams
+}
+
+type PresentationDefinitionResponseObject interface {
+	VisitPresentationDefinitionResponse(w http.ResponseWriter) error
+}
+
+type PresentationDefinition200JSONResponse []PresentationDefinition
+
+func (response PresentationDefinition200JSONResponse) VisitPresentationDefinitionResponse(w http.ResponseWriter) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+
+	return json.NewEncoder(w).Encode(response)
+}
+
+type PresentationDefinition404Response struct {
+}
+
+func (response PresentationDefinition404Response) VisitPresentationDefinitionResponse(w http.ResponseWriter) error {
 	w.WriteHeader(404)
 	return nil
 }
@@ -536,6 +596,9 @@ type StrictServerInterface interface {
 	// Returns the did:web version of a Nuts DID document
 	// (GET /iam/{did}/did.json)
 	GetWebDID(ctx context.Context, request GetWebDIDRequestObject) (GetWebDIDResponseObject, error)
+	// Used by relying parties to obtain a presentation definition for desired scopes.
+	// (GET /iam/{did}/presentation_definition)
+	PresentationDefinition(ctx context.Context, request PresentationDefinitionRequestObject) (PresentationDefinitionResponseObject, error)
 	// Used by to request access- or refresh tokens.
 	// (POST /iam/{did}/token)
 	HandleTokenRequest(ctx context.Context, request HandleTokenRequestRequestObject) (HandleTokenRequestResponseObject, error)
@@ -629,6 +692,32 @@ func (sh *strictHandler) GetWebDID(ctx echo.Context, did string) error {
 		return err
 	} else if validResponse, ok := response.(GetWebDIDResponseObject); ok {
 		return validResponse.VisitGetWebDIDResponse(ctx.Response())
+	} else if response != nil {
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+	return nil
+}
+
+// PresentationDefinition operation middleware
+func (sh *strictHandler) PresentationDefinition(ctx echo.Context, did string, params PresentationDefinitionParams) error {
+	var request PresentationDefinitionRequestObject
+
+	request.Did = did
+	request.Params = params
+
+	handler := func(ctx echo.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.PresentationDefinition(ctx.Request().Context(), request.(PresentationDefinitionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PresentationDefinition")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		return err
+	} else if validResponse, ok := response.(PresentationDefinitionResponseObject); ok {
+		return validResponse.VisitPresentationDefinitionResponse(ctx.Response())
 	} else if response != nil {
 		return fmt.Errorf("unexpected response type: %T", response)
 	}
